@@ -39,4 +39,5 @@ void main(void) {
 
   close(listenfd);
   handle_request(connfd, buffer);
+  close(connfd);
 }
