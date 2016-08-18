@@ -33,9 +33,12 @@ void main(void) {
     if (connfd < 0) {
       fail("ERROR: Unable to accept.");
     }
-    // TODO: fork here.
-    handle_request(connfd, buffer);
+    if (0 == fork()) {
+      break;
+    }
     close(connfd);
   }
-}
 
+  close(listenfd);
+  handle_request(connfd, buffer);
+}
