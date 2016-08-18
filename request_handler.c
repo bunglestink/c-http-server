@@ -9,8 +9,12 @@ static char* get_file_name(char* path);
 static char* get_local_path(char* path);
 static int file_exists(char* file_path);
 static void write_file(int connfd, char* path);
-static void write_response(int connfd, char* raw_response);
+static int write_response(int connfd, char* raw_response);
+static int write_response_bytes(int connfd, char* raw_response, size_t num_bytes);
 static void write_type_headers(int connfd, char* file_name);
+
+// Response buffer size of 0.25M
+#define RESPONSE_BUFFER_SIZE 262144
 
 
 void handle_request(int connfd, char* buffer) {
@@ -54,7 +58,6 @@ int file_exists(char* path) {
 }
 
 
-
 char* get_file_name(char* path) {
   int last_separator_index = last_index_of(path, '/');
   return &path[last_separator_index + 1];
@@ -74,7 +77,7 @@ char* get_extension(char* file_name) {
 void write_file(int connfd, char* path) {
   FILE* file;
   char* local_path = get_local_path(path);
-  if (!(file = fopen(local_path, "r"))) {
+  if (!(file = fopen(local_path, "rb"))) {
     printf("Unable to open file: %s\n", local_path);
     write_response(connfd, "HTTP/1.0 500 Internal Server Error\n\n");
     return;
@@ -83,20 +86,42 @@ void write_file(int connfd, char* path) {
   write_response(connfd, "HTTP/1.0 200 OK\n");
   write_type_headers(connfd, file_name);
   write_response(connfd, "\n");
-  // TODO: Replace with buffered read/write.
-  int c;
-  while ((c = fgetc(file)) != EOF) {
-    write_response(connfd, (char*) &c);
+
+  int bytes_read;
+  char* buffer = (char*) x_malloc(RESPONSE_BUFFER_SIZE * sizeof(char));
+  while ((bytes_read = fread(buffer, 1, RESPONSE_BUFFER_SIZE, file)) != 0) {
+    if (bytes_read < 0) {
+      perror("ERROR: Reading file.");
+      break;
+    }
+    if (!write_response_bytes(connfd, buffer, bytes_read)) {
+      break;
+    }
   }
+  printf("\nbytes: %i\n", (int)XXtotal);
   fclose(file);
 }
 
 
-void write_response(int connfd, char* raw_response) {
-  int len = strlen(raw_response);
-  if (write(connfd, raw_response, len) < 0) {
-    perror("ERROR: Unable to send response.");
+int write_response(int connfd, char* raw_response) {
+  size_t len = strlen(raw_response);
+  return write_response_bytes(connfd, raw_response, len);
+}
+
+
+int write_response_bytes(int connfd, char* response, size_t num_bytes) {
+  char* ptr = response;
+  int bytes_to_write = num_bytes;
+  while (bytes_to_write > 0) {
+    int bytes_written = write(connfd, ptr, bytes_to_write);
+    if (bytes_written < 0) {
+      perror("ERROR: Unable to send response.");
+      return 0;
+    }
+    bytes_to_write -= bytes_written;
+    ptr += bytes_written;
   }
+  return 1;
 }
 
 
