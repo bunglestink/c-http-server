@@ -109,19 +109,45 @@ Dictionary* get_headers(char* raw_request, size_t first_header_index, size_t* fi
   size_t lf;
   size_t processed = 0;
   while ((lf = index_of(request, '\n')) > 1) {
-    // TODO: parse header here.
+    if (!add_next_header(headers, request, lf)) {
+      Dictionary_delete(headers);
+      return NULL;
+    }
     request = &request[lf + 1];
     processed += (lf + 1);
   }
   if (lf == -1) {
+    Dictionary_delete(headers);
     return NULL;
   }
   if (lf == 1 && request[0] != '\r') {
+    Dictionary_delete(headers);
     return NULL;
   }
   request = &request[lf + 1];
   *first_body_index = first_header_index + processed + lf + 1;
   return headers;
+}
+
+
+// Adds header to dict from first line of request.
+int add_next_header(Dictionary* dict, char* request, size_t lf) {
+  size_t colon = index_of(request, ':');
+  if (colon < 1 || lf < colon) {
+    return 0;
+  }
+  // TODO: Trim key?
+  char* key = (char*) x_malloc((1 + colon) * sizeof(char));
+  strncpy(key, request, colon);
+  key[colon] = '\0';
+  // TODO: Trim value.
+  size_t size = lf - colon;
+  char* value = (char*) x_malloc((1 + size) * sizeof(char));
+  strncpy(value, &request[colon + 1], size);
+  value[size] = '\0';
+
+  Dictionary_set(dict, key, value);
+  return 1;
 }
 
 
