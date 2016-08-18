@@ -1,92 +1,141 @@
-#include <stdlib.h>
+#include <stdio.h>
 #include <string.h>
+#include "lib.h"
 #include "request.h"
 
 
-static char* get_method(char* raw_request);
-static char* get_path(char* raw_request);
-static int get_method_length(char* raw_request);
+static char* get_method(char* raw_request, size_t* first_path_index);
+static char* get_http_version(char* raw_request, size_t first_http_index, size_t* first_header_index);
+static char* get_path(char* raw_request, size_t first_path_index, size_t* fist_http_index);
+static Dictionary* get_headers(char* raw_request, size_t first_header_index, size_t* first_body_index);
+static char* get_body(char* raw_request, size_t first_body_index);
 
 
 Request* Request_new(char* raw_request) {
-  if (strlen(raw_request) < 4) {
+  size_t i;
+  Request* request = (Request*) x_malloc(sizeof(Request));
+  request->method = NULL;
+  request->path = NULL;
+  request->headers = NULL;
+  request->body = NULL;
+
+  request->method = get_method(raw_request, &i);
+  if (request->method == NULL) {
+    Request_delete(request);
     return NULL;
   }
-  char* method = get_method(raw_request);
-  if (method == NULL) {
+
+  request->path = get_path(raw_request, i, &i);
+  if (request->path == NULL) {
+    Request_delete(request);
     return NULL;
   }
-  char* path = get_path(raw_request);
-  if (path == NULL) {
+
+  char* http_version = get_http_version(raw_request, i, &i);
+  if (http_version == NULL) {
+    Request_delete(request);
     return NULL;
   }
-  Request* request = (Request*) malloc(sizeof(Request));
-  request->method = method;
-  request->path = path;
+  x_free(http_version);  // TODO: Consider using this.
+
+  request->headers = get_headers(raw_request, i, &i);
+  if (request->headers == NULL) {
+    Request_delete(request);
+    return NULL;
+  }
+
+  request->body = get_body(raw_request, i);
+  if (request->body == NULL) {
+    Request_delete(request);
+    return NULL;
+  }
   return request;
 }
 
 
-char* get_method(char* raw_request) {
-  int method_len = get_method_length(raw_request);
-  char* method = (char*) malloc((method_len + 1) * sizeof(char));
-  strncpy(method, raw_request, method_len);
-  method[method_len] = '\0';
+char* get_method(char* raw_request, size_t* first_path_index) {
+  size_t sp = index_of(raw_request, ' ');
+  size_t lf = index_of(raw_request, '\n');
+  if (sp < 1 || lf < sp) {
+    return NULL;
+  }
+  char* method = (char*) x_malloc((sp + 1) * sizeof(char));
+  strncpy(method, raw_request, sp);
+  method[sp] = '\0';
+  // TODO: Be tolerant with whitespace.
+  *first_path_index = sp + 1;
   return method;
 }
 
 
-int get_method_length(char* raw_request) {
-  int len = strlen(raw_request);
-  int method_len = 0;
-  int i;
-  for (i = 0; i < len; i++) {
-    if (raw_request[i] == ' ') {
-      break;
-    }
-    // Only allow uppercase methods.
-    if (raw_request[i] < 'A' || raw_request[i] > 'Z') {
-      return -1;
-    }
-    method_len += 1;
-  }
-  return method_len;
-}
-
-
-char* get_path(char* raw_request) {
-  char path_buffer[4096];
-  int path_start = -1;
-  int path_len = 0;
-  int len = strlen(raw_request);
-  int i;
-  for (i = 0; i < len; i++) {
-    if (raw_request[i] == ' ') {
-      path_start = i + 1;
-      break;
-    }
-  }
-  if (path_start == -1) {
+char* get_path(char* raw_request, size_t first_path_index, size_t* first_http_index) {
+  char* request = &raw_request[first_path_index];
+  size_t sp = index_of(request, ' ');
+  size_t lf = index_of(request, '\n');
+  if (sp == -1 || lf < sp) {
     return NULL;
   }
-  for (path_len = 0; (path_len + path_start) < len; path_len++) {
-    // TODO: Valid chars only?
-    if (raw_request[path_start + path_len] == ' ') {
-      break;
-    }
-  }
-  if (path_len == 0 || (path_start + path_len) > len) {
-    return NULL;
-  }
-  char* path = (char*) malloc((path_len + 1) * sizeof(char));
-  strncpy(path, &raw_request[path_start], path_len);
+  char* path = (char*) x_malloc((sp + 1) * sizeof(char));
+  strncpy(path, request, sp);
+  path[sp] = '\0';
+  // TODO: Be tolerant with whitespace.
+  *first_http_index = first_path_index + sp + 1;
   return path;
 }
 
 
-void Request_delete(Request* request) {
-  free(request->method);
-  free(request->path);
-  free(request);
+char* get_http_version(char* raw_request, size_t first_http_index, size_t* first_header_index) {
+  char* request = &raw_request[first_http_index];
+  // HTTP-version must be like "HTTP/1.1"
+  size_t lf = index_of(request, '\n');
+  // LF should be at index 8 or 9 (allowing missing CR).
+  if (lf < 8 || lf > 9) {
+    return NULL;
+  }
+  if (lf == 9 && request[8] != '\r') {
+    return NULL;
+  }
+  char* http_version = (char*) x_malloc(9 * sizeof(char));
+  strncpy(http_version, request, lf);
+  http_version[8] = '\0';
+  *first_header_index = first_http_index + lf + 1;
+  return http_version;
 }
 
+
+Dictionary* get_headers(char* raw_request, size_t first_header_index, size_t* first_body_index) {
+  char* request = &raw_request[first_header_index];
+  Dictionary* headers = Dictionary_new();
+  size_t lf;
+  size_t processed = 0;
+  while ((lf = index_of(request, '\n')) > 1) {
+    // TODO: parse header here.
+    request = &request[lf + 1];
+    processed += (lf + 1);
+  }
+  if (lf == -1) {
+    return NULL;
+  }
+  if (lf == 1 && request[0] != '\r') {
+    return NULL;
+  }
+  request = &request[lf + 1];
+  *first_body_index = first_header_index + processed + lf + 1;
+  return headers;
+}
+
+
+char* get_body(char* raw_request, size_t first_body_index) {
+  int len = strlen(raw_request);
+  // TODO: Consider validating the body here (content-length?).
+  return &raw_request[first_body_index];
+}
+
+
+void Request_delete(Request* request) {
+  Dictionary_delete(request->headers);
+  // Note: request->body is a part of raw_request.
+  x_free(request->method);
+  x_free(request->path);
+  x_free(request);
+}
