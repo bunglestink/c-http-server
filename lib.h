@@ -1,6 +1,8 @@
 #ifndef _LIB_H_
 #define _LIB_H_
 
+#include "stdlib.h"
+
 
 void fail(char* error_message);
 int is_whitespace(char c);

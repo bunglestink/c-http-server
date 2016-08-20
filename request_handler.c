@@ -1,5 +1,6 @@
 #include <stdio.h>
 #include <string.h>
+#include "config.h"
 #include "lib.h"
 #include "request.h"
 #include "request_handler.h"
@@ -7,8 +8,10 @@
 static char* get_extension(char* file_name);
 static char* get_file_name(char* path);
 static long get_file_size(FILE* file);
-static char* get_local_path(char* path);
+static char* get_local_path(Request* request, Route* route);
 static int file_exists(char* file_path);
+void handle_cgi_request(int connfd, Request* request, Route* route);
+void handle_file_request(int connfd, Request* request, Route* route);
 static void write_content_length_header(int connfd, long size);
 static void write_file(int connfd, char* path);
 static int write_response(int connfd, char* raw_response);
@@ -29,30 +32,81 @@ void handle_request(int connfd, char* buffer) {
   if (request == NULL) {
     printf("Bad request received: %s\n", buffer);
     write_response(connfd, "HTTP/1.0 400 Bad Request\r\nContent-Length: 0\r\n\r\n");
-  } else if (strcmp(request->method, "GET") != 0) {
-    printf("Method not allowed: %s\n", request->method);
-    write_response(connfd, "HTTP/1.0 405 Method Not Allowed\r\nContent-Length: 0\r\n\r\n");
-  } else if (!file_exists(request->path)) {
-    printf("File not found: %s\n", request->path);
-    write_response(connfd, "HTTP/1.0 404 Not Found\r\nContent-Length: 0\r\n\r\nFile Not Found\n");
-  } else {
-    printf("%s %s\n", request->method, request->path);
-    write_file(connfd, request->path);
-    Request_delete(request);
+    return;
   }
+
+  Config* config = get_config();
+  int i;
+  for (i = 0; i < config->routes_count; i++) {
+    Route* route = &config->routes[i];
+    if (!is_route_match(route, request)) {
+      continue;
+    }
+    switch (route->type) {
+      case ROUTE_TYPE_CGI:
+        handle_cgi_request(connfd, request, route);
+        break;
+      case ROUTE_TYPE_FILE:
+        handle_file_request(connfd, request, route);
+        break;
+      default:
+        perror("INTERNAL ERROR: Bad config route type.");
+        write_response(connfd, "HTTP/1.0 404 Not Found\r\nContent-Length: 0\r\n\r\n");
+    }
+    break;
+  }
+  Config_delete(config);
+  Request_delete(request);
 }
 
 
-char* get_local_path(char* path) {
-  // TODO: Make this configurable and safe.
-  return &path[1];
+int is_route_match(Route* route, Request* request) {
+  // Right now we only support prefix matching.
+  size_t len = strlen(route->path);
+  return strncmp(request->path, route->path, len) == 0;
+}
+
+
+void handle_cgi_request(int connfd, Request* request, Route* route) {
+  write_response(connfd, "HTTP/1.0 200 OK\r\nContent-Length: 2\r\n\r\nOK");
+}
+
+
+void handle_file_request(int connfd, Request* request, Route* route) {
+  if (strcmp(request->method, "GET") != 0) {
+    printf("Method not allowed: %s\n", request->method);
+    write_response(connfd, "HTTP/1.0 405 Method Not Allowed\r\nContent-Length: 0\r\n\r\n");
+    return;
+  }
+  char* local_path = get_local_path(request, route);
+  if (!file_exists(local_path)) {
+    printf("File not found: %s\n", request->path);
+    write_response(connfd, "HTTP/1.0 404 Not Found\r\nContent-Length: 0\r\n\r\nFile Not Found\n");
+    x_free(local_path);
+    return;
+  }
+  printf("%s %s\n", request->method, request->path);
+  write_file(connfd, local_path);
+  x_free(local_path);
+}
+
+
+char* get_local_path(Request* request, Route* route) {
+  FileConfig* file_config = (FileConfig*) route->config;
+
+  int length = strlen(request->path) + strlen(file_config->local_path) - strlen(route->path);
+  int route_path_length = strlen(route->path);
+  char* file_path = &request->path[route_path_length];
+  char* local_path = (char*) x_malloc(sizeof(1 + length));
+  sprintf(local_path, "%s%s", file_config->local_path, file_path);
+  local_path[length] = '\0';
+  return local_path;
 }
 
 
 int file_exists(char* path) {
   FILE* file;
-  char* local_path = get_local_path(path);
-  if ((file = fopen(local_path, "r"))) {
+  if ((file = fopen(path, "r"))) {
     fclose(file);
     return 1;
   }
@@ -78,9 +132,8 @@ char* get_extension(char* file_name) {
 
 void write_file(int connfd, char* path) {
   FILE* file;
-  char* local_path = get_local_path(path);
-  if (!(file = fopen(local_path, "rb"))) {
-    printf("Unable to open file: %s\n", local_path);
+  if (!(file = fopen(path, "rb"))) {
+    printf("Unable to open file: %s\n", path);
     write_response(connfd, "HTTP/1.0 500 Internal Server Error\r\n\r\n");
     return;
   }
