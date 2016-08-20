@@ -5,13 +5,14 @@
 #include "request.h"
 #include "request_handler.h"
 
+static int file_exists(char* file_path);
 static char* get_extension(char* file_name);
 static char* get_file_name(char* path);
 static long get_file_size(FILE* file);
 static char* get_local_path(Request* request, Route* route);
-static int file_exists(char* file_path);
 void handle_cgi_request(int connfd, Request* request, Route* route);
 void handle_file_request(int connfd, Request* request, Route* route);
+int is_numeral(char c);
 static void write_content_length_header(int connfd, long size);
 static void write_file(int connfd, char* path);
 static int write_response(int connfd, char* raw_response);
@@ -68,7 +69,64 @@ int is_route_match(Route* route, Request* request) {
 
 
 void handle_cgi_request(int connfd, Request* request, Route* route) {
-  write_response(connfd, "HTTP/1.0 200 OK\r\nContent-Length: 2\r\n\r\nOK");
+  char buffer[RESPONSE_BUFFER_SIZE];
+  char* local_path = get_local_path(request, route);
+  if (!file_exists(local_path)) {
+    printf("File not found: %s\n", request->path);
+    write_response(connfd, "HTTP/1.0 404 Not Found\r\nContent-Length: 15\r\n\r\nFile Not Found\n");
+    return;
+  }
+  CgiConfig* config = (CgiConfig*) route->config;
+  // TODO: Support path after script.
+  char* extension = get_extension(local_path);
+  char* cmd = Dictionary_get(config->file_ext_to_cmd, extension);
+  char* cmd_to_execute;
+  if (cmd == NULL) {
+    cmd_to_execute = local_path;
+  } else {
+    int size = strlen(cmd) + 1 + strlen(local_path) + 1;
+    cmd_to_execute = (char*) x_malloc(size);
+    sprintf(cmd_to_execute, "%s %s", cmd, local_path);
+    cmd_to_execute[size] = '\0';
+  }
+
+  FILE* proc = popen(cmd_to_execute, "r");
+  if (!proc) {
+    printf("Error running command: %s\n", cmd_to_execute);
+    write_response(connfd, "HTTP/1.0 500 Internal Server Error\r\nContent-Length: 22\r\n\r\nInternal Server Error\n");
+    return;
+  }
+
+  write_response(connfd, "HTTP/1.0 ");
+  int status_written = 0;
+  int bytes_read;
+  while ((bytes_read = fread(buffer, 1, RESPONSE_BUFFER_SIZE, proc)) != 0) {
+    if (bytes_read < 0) {
+      perror("ERROR: Reading file.");
+      break;
+    }
+    if (!status_written) {
+      status_written = 1;
+      if (bytes_read < 4 ||
+          !is_numeral(buffer[0]) ||
+          !is_numeral(buffer[1]) ||
+          !is_numeral(buffer[2]) ||
+          (buffer[3] != ' ' && buffer[3] != '\t')) {
+
+        write_response(connfd, "200 OK\r\n");
+      }
+    }
+    if (!write_response_bytes(connfd, buffer, bytes_read)) {
+      break;
+    }
+  }
+
+  pclose(proc);
+}
+
+
+int is_numeral(char c) {
+  return '0' <= c && c <= '9';
 }
 
 
@@ -150,10 +208,8 @@ void write_file(int connfd, char* path) {
   write_response(connfd, "\r\n");
 
   int bytes_read;
-  int total = 0;
   char* buffer = (char*) x_malloc(RESPONSE_BUFFER_SIZE * sizeof(char));
   while ((bytes_read = fread(buffer, 1, RESPONSE_BUFFER_SIZE, file)) != 0) {
-    total += bytes_read;
     if (bytes_read < 0) {
       perror("ERROR: Reading file.");
       break;
@@ -162,7 +218,6 @@ void write_file(int connfd, char* path) {
       break;
     }
   }
-  printf("Total: %i\n", total);
   fclose(file);
   // TODO: Figure out how to ensure write is complete before exiting.
 }
