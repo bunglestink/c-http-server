@@ -17,11 +17,16 @@ static int write_response(int connfd, char* raw_response);
 static int write_response_bytes(int connfd, char* raw_response, size_t num_bytes);
 static void write_type_headers(int connfd, char* file_name);
 
+
+// TODO: Probably enlarge this.
+#define REQUEST_BUFFER_SIZE 65536
+
 // Response buffer size of 1MB
 #define RESPONSE_BUFFER_SIZE 1048576
 
 
-void handle_request(int connfd, char* buffer) {
+void handle_request(int connfd, Config* config) {
+  char buffer[REQUEST_BUFFER_SIZE];
   memset(buffer, 0, REQUEST_BUFFER_SIZE);
   if (read(connfd, buffer, REQUEST_BUFFER_SIZE) < 0) {
     fail("ERROR: Unable to read socket.");
@@ -34,7 +39,6 @@ void handle_request(int connfd, char* buffer) {
     return;
   }
 
-  Config* config = get_config();
   int i;
   for (i = 0; i < config->routes_count; i++) {
     Route* route = &config->routes[i];
@@ -54,7 +58,6 @@ void handle_request(int connfd, char* buffer) {
     }
     break;
   }
-  Config_delete(config);
   Request_delete(request);
 }
 

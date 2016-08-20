@@ -1,13 +1,13 @@
 #include <string.h>
 #include <netinet/in.h>
+#include "config.h"
 #include "lib.h"
 #include "request_handler.h"
 
 
 void main(void) {
   int listenfd = 0, connfd = 0, client_length;
-  int port = 7777;
-  char buffer[REQUEST_BUFFER_SIZE];
+  Config* config = get_config();
   struct sockaddr_in server_addr, client_addr;
 
   listenfd = socket(AF_INET, SOCK_STREAM, 0);
@@ -18,7 +18,7 @@ void main(void) {
 
   server_addr.sin_family = AF_INET;
   server_addr.sin_addr.s_addr = INADDR_ANY;
-  server_addr.sin_port = htons(port);
+  server_addr.sin_port = htons(config->port);
 
   if (bind(listenfd, (struct sockaddr*)&server_addr, sizeof(server_addr)) < 0) {
     fail("ERROR: Unable to bind.");
@@ -38,6 +38,7 @@ void main(void) {
   }
 
   close(listenfd);
-  handle_request(connfd, buffer);
+  handle_request(connfd, config);
   close(connfd);
+  Config_delete(config);
 }

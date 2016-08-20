@@ -43,6 +43,7 @@ typedef struct HttpConfig {
 
 
 typedef struct Config {
+  int port;
   int routes_count;
   Route* routes;
 } Config;

@@ -9,6 +9,7 @@ static void HttpConfig_delete(HttpConfig* config);
 
 Config* get_config() {
   Config* config = (Config*) x_malloc(sizeof(Config));
+  config->port = 7777;
   config->routes_count = 2;
   config->routes = (Route*) x_malloc(2 * sizeof(Route));
 
