@@ -6,13 +6,17 @@
 #include "request_handler.h"
 
 static int file_exists(char* file_path);
+char* get_cgi_command(Request* request, Route* route);
+char* get_cmd_with_env(char* cmd, Dictionary* env);
 static char* get_extension(char* file_name);
 static char* get_file_name(char* path);
 static long get_file_size(FILE* file);
+char* get_header_key(char* header);
 static char* get_local_path(Request* request, Route* route);
 void handle_cgi_request(int connfd, Request* request, Route* route);
 void handle_file_request(int connfd, Request* request, Route* route);
 int is_numeral(char c);
+char to_upper(char c);
 static void write_content_length_header(int connfd, long size);
 static void write_file(int connfd, char* path);
 static int write_response(int connfd, char* raw_response);
@@ -70,30 +74,18 @@ int is_route_match(Route* route, Request* request) {
 
 void handle_cgi_request(int connfd, Request* request, Route* route) {
   char buffer[RESPONSE_BUFFER_SIZE];
-  char* local_path = get_local_path(request, route);
-  if (!file_exists(local_path)) {
+
+  char* cmd = get_cgi_command(request, route);
+  if (cmd == NULL) {
     printf("File not found: %s\n", request->path);
     write_response(connfd, "HTTP/1.0 404 Not Found\r\nContent-Length: 15\r\n\r\nFile Not Found\n");
     return;
   }
-  CgiConfig* config = (CgiConfig*) route->config;
-  // TODO: Support path after script.
-  char* extension = get_extension(local_path);
-  char* cmd = Dictionary_get(config->file_ext_to_cmd, extension);
-  char* cmd_to_execute;
-  if (cmd == NULL) {
-    cmd_to_execute = local_path;
-  } else {
-    int size = strlen(cmd) + 1 + strlen(local_path) + 1;
-    cmd_to_execute = (char*) x_malloc(size);
-    sprintf(cmd_to_execute, "%s %s", cmd, local_path);
-    cmd_to_execute[size] = '\0';
-  }
-
-  FILE* proc = popen(cmd_to_execute, "r");
+  FILE* proc = popen(cmd, "r");
   if (!proc) {
-    printf("Error running command: %s\n", cmd_to_execute);
+    printf("Error running command: %s\n", cmd);
     write_response(connfd, "HTTP/1.0 500 Internal Server Error\r\nContent-Length: 22\r\n\r\nInternal Server Error\n");
+    x_free(cmd);
     return;
   }
 
@@ -121,9 +113,122 @@ void handle_cgi_request(int connfd, Request* request, Route* route) {
     }
   }
 
+  x_free(cmd);
   pclose(proc);
 }
 
+
+char* get_cgi_command(Request* request, Route* route) {
+  char* local_path = get_local_path(request, route);
+  if (!file_exists(local_path)) {
+    x_free(local_path);
+    return NULL;
+  }
+  CgiConfig* config = (CgiConfig*) route->config;
+  // TODO: Support path after script.
+  char* extension = get_extension(local_path);
+  char* cmd = Dictionary_get(config->file_ext_to_cmd, extension);
+  char* cmd_to_execute;
+  if (cmd == NULL) {
+    cmd_to_execute = local_path;
+  } else {
+    int size = strlen(cmd) + 1 + strlen(local_path) + 1;
+    cmd_to_execute = (char*) x_malloc(size);
+    sprintf(cmd_to_execute, "%s %s", cmd, local_path);
+    cmd_to_execute[size] = '\0';
+  }
+
+  Dictionary* env = Dictionary_new();
+  // Set standard CGI environment variables.
+  Dictionary_set(env, "AUTH_TYPE", "");
+  Dictionary_set(env, "CONTENT_LENGTH", "");
+  Dictionary_set(env, "CONTENT_TYPE", "");
+  Dictionary_set(env, "GATEWAY_INTERFACE", "");
+  Dictionary_set(env, "PATH_INFO", request->path);
+  // TODO: Support for path after script here.
+  Dictionary_set(env, "PATH_TRANSLATED", "");
+  Dictionary_set(env, "REDIRECT_STATUS", "200");  // Required for php-cgi
+  Dictionary_set(env, "REMOTE_ADDR", "");
+  Dictionary_set(env, "REMOTE_HOST", "");
+  Dictionary_set(env, "REMOTE_IDENT", "");
+  Dictionary_set(env, "REMOTE_USER", "");
+  Dictionary_set(env, "REQUEST_METHOD", request->method);
+  Dictionary_set(env, "SCRIPT_FILENAME", local_path);  // Required for php-cgi
+  Dictionary_set(env, "SCRIPT_NAME", local_path);
+  Dictionary_set(env, "SERVER_NAME", "");
+  Dictionary_set(env, "SERVER_PORT", "");
+  Dictionary_set(env, "SERVER_PROTOCOL", "");
+  Dictionary_set(env, "SERVER_SOFTWARE", "");
+
+  DictionaryEntry* entries = Dictionary_get_entries(request->headers);
+  int i;
+  for (i = 0; i < request->headers->size; i++) {
+    char* header_key = get_header_key(entries[i].key);
+    Dictionary_set(env, header_key, entries[i].value);
+  }
+  x_free(entries);
+
+  char* cmd_with_env = get_cmd_with_env(cmd_to_execute, env);
+  x_free(local_path);
+  x_free(cmd_to_execute);
+  Dictionary_delete(env);
+  return cmd_with_env;
+}
+
+
+char* get_header_key(char* header) {
+  size_t len = strlen(header);
+  size_t key_len = 6 + len;
+  char* key = (char*) x_malloc(key_len * sizeof(char));
+  sprintf(key, "HTTP_%s", header);
+  key[key_len - 1] = '\0';
+
+  int i;
+  for (i = 0; i < key_len; i++) {
+    key[i] = to_upper(key[i]);
+    if (key[i] == '-') {
+      key[i] = '_';
+    }
+  }
+  return key;
+}
+
+
+char* get_cmd_with_env(char* cmd, Dictionary* env) {
+  size_t total_length = 0;
+  DictionaryEntry* entries = Dictionary_get_entries(env);
+  int i;
+  for (i = 0; i < env->size; i++) {
+    DictionaryEntry* entry = &entries[i];
+    // Format: 'KEY="VALUE" '
+    total_length += strlen(entry->key) + 2 + strlen(entry->value) + 2;
+  }
+  total_length += strlen(cmd);
+  total_length += 1;  // null terminator.
+
+  printf("TL: %i\n", (int)total_length);
+  char* cmd_with_env = (char*) x_malloc(total_length * sizeof(char));
+  memset(cmd_with_env, 0, total_length);
+  char* cmd_ptr = cmd_with_env;
+  for (i = 0; i < env->size; i++) {
+    DictionaryEntry* entry = &entries[i];
+    sprintf(cmd_ptr, "%s=\"%s\" ", entry->key, (char*) entry->value);
+    int len = strlen(entry->key) + 2 + strlen(entry->value) + 2;
+    cmd_ptr = &cmd_ptr[len];
+  }
+  sprintf(cmd_ptr, "%s", cmd);
+  printf("CMD: %s\n", cmd_with_env);
+  return cmd_with_env;
+}
+
+
+char to_upper(char c) {
+  if (c < 'a' || c > 'z') {
+    return c;
+  }
+  char diff = 'a' - 'A';
+  return c - diff;
+}
 
 int is_numeral(char c) {
   return '0' <= c && c <= '9';

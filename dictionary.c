@@ -9,6 +9,7 @@ static DictionaryNode* get_node(Dictionary* dict, const char* key);
 Dictionary* Dictionary_new() {
   Dictionary* dict = (Dictionary*) x_malloc(sizeof(Dictionary));
   dict->head = NULL;
+  dict->size = 0;
   return dict;
 }
 
@@ -40,6 +41,7 @@ void Dictionary_set(Dictionary* dict, char* key, char* value) {
     ((DictionaryNode*)dict->head)->prev = node;
   }
   dict->head = node;
+  dict->size += 1;
 }
 
 
@@ -69,6 +71,7 @@ void Dictionary_remove(Dictionary* dict, const char* key) {
   if (node->prev) {
     node->prev->next = node->next;
   }
+  dict->size -= 1;
   x_free(node);
 }
 
@@ -89,3 +92,15 @@ DictionaryEntry* get_entry(Dictionary* dict, const char* key) {
   return node == NULL ? NULL : &node->entry;
 }
 
+
+DictionaryEntry* Dictionary_get_entries(Dictionary* dict) {
+  DictionaryEntry* entries = (DictionaryEntry*) x_malloc(dict->size * sizeof(DictionaryEntry));
+  DictionaryNode* node = dict->head;
+  int i = 0;
+  while (node != NULL) {
+    entries[i] = node->entry;
+    node = node->next;
+    i += 1;
+  }
+  return entries;
+}
