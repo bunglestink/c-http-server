@@ -5,6 +5,63 @@
 
 
 /**
+ * Determines whether a file exists.
+ */
+int file_exists(char* path) {
+  FILE* file;
+  if ((file = fopen(path, "r"))) {
+    fclose(file);
+    return 1;
+  }
+  return 0;
+}
+
+
+/**
+ * Gets the file name from a file path.
+ * Result is a substring of path, not new char array.
+ */
+char* get_file_name(char* path) {
+  int last_separator_index = last_index_of(path, '/');
+  return &path[last_separator_index + 1];
+}
+
+
+/**
+ * Gets the extension from a file name.
+ * Result is a substring of path, not new char array.
+ */
+char* get_extension(char* file_name) {
+  int dot_index = last_index_of(file_name, '.');
+  if (dot_index == -1) {
+    int len = strlen(file_name);
+    return &file_name[len];
+  }
+  return &file_name[dot_index + 1];
+}
+
+
+/**
+ * Gets the uppercase version of a character.
+ */
+char to_upper(char c) {
+  if (c < 'a' || c > 'z') {
+    return c;
+  }
+  char diff = 'a' - 'A';
+  return c - diff;
+}
+
+
+/**
+ * Determines whether a character is a 0-9 numeral.
+ */
+int is_numeral(char c) {
+  return '0' <= c && c <= '9';
+}
+
+
+/**
  * Determines whether a character is whitespace.
  */
 int is_whitespace(char c) {

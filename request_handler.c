@@ -5,18 +5,12 @@
 #include "request.h"
 #include "request_handler.h"
 
-static int file_exists(char* file_path);
-char* get_cgi_command(Request* request, Route* route);
-char* get_cmd_with_env(char* cmd, Dictionary* env);
-static char* get_extension(char* file_name);
-static char* get_file_name(char* path);
-static long get_file_size(FILE* file);
-char* get_header_key(char* header);
+static char* get_cgi_command(Request* request, Route* route);
+static char* get_cmd_with_env(char* cmd, Dictionary* env);
+static char* get_header_key(char* header);
 static char* get_local_path(Request* request, Route* route);
-void handle_cgi_request(int connfd, Request* request, Route* route);
-void handle_file_request(int connfd, Request* request, Route* route);
-int is_numeral(char c);
-char to_upper(char c);
+static void handle_cgi_request(int connfd, Request* request, Route* route);
+static void handle_file_request(int connfd, Request* request, Route* route);
 static void write_content_length_header(int connfd, long size);
 static void write_file(int connfd, char* path);
 static int write_response(int connfd, char* raw_response);
@@ -89,6 +83,7 @@ void handle_cgi_request(int connfd, Request* request, Route* route) {
     return;
   }
 
+  printf("%s %s\n", request->method, request->path);
   write_response(connfd, "HTTP/1.0 ");
   int status_written = 0;
   int bytes_read;
@@ -138,6 +133,7 @@ char* get_cgi_command(Request* request, Route* route) {
     cmd_to_execute[size] = '\0';
   }
 
+  // TODO: Populate all of these as possible.
   Dictionary* env = Dictionary_new();
   // Set standard CGI environment variables.
   Dictionary_set(env, "AUTH_TYPE", "");
@@ -206,7 +202,6 @@ char* get_cmd_with_env(char* cmd, Dictionary* env) {
   total_length += strlen(cmd);
   total_length += 1;  // null terminator.
 
-  printf("TL: %i\n", (int)total_length);
   char* cmd_with_env = (char*) x_malloc(total_length * sizeof(char));
   memset(cmd_with_env, 0, total_length);
   char* cmd_ptr = cmd_with_env;
@@ -217,21 +212,7 @@ char* get_cmd_with_env(char* cmd, Dictionary* env) {
     cmd_ptr = &cmd_ptr[len];
   }
   sprintf(cmd_ptr, "%s", cmd);
-  printf("CMD: %s\n", cmd_with_env);
   return cmd_with_env;
-}
-
-
-char to_upper(char c) {
-  if (c < 'a' || c > 'z') {
-    return c;
-  }
-  char diff = 'a' - 'A';
-  return c - diff;
-}
-
-int is_numeral(char c) {
-  return '0' <= c && c <= '9';
 }
 
 
@@ -264,32 +245,6 @@ char* get_local_path(Request* request, Route* route) {
   sprintf(local_path, "%s%s", file_config->local_path, file_path);
   local_path[length] = '\0';
   return local_path;
-}
-
-
-int file_exists(char* path) {
-  FILE* file;
-  if ((file = fopen(path, "r"))) {
-    fclose(file);
-    return 1;
-  }
-  return 0;
-}
-
-
-char* get_file_name(char* path) {
-  int last_separator_index = last_index_of(path, '/');
-  return &path[last_separator_index + 1];
-}
-
-
-char* get_extension(char* file_name) {
-  int dot_index = last_index_of(file_name, '.');
-  if (dot_index == -1) {
-    int len = strlen(file_name);
-    return &file_name[len];
-  }
-  return &file_name[dot_index + 1];
 }
 
 

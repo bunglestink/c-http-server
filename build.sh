@@ -7,4 +7,4 @@ gcc \
   main.c \
   request.c \
   request_handler.c \
-  -o main
+  -o server
