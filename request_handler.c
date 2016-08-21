@@ -225,7 +225,8 @@ char* get_cmd_with_env(char* cmd, Dictionary* env, char* body, int content_lengt
   char* cmd_with_env = (char*) x_malloc(total_length * sizeof(char));
   memset(cmd_with_env, 0, total_length);
   char* cmd_ptr = cmd_with_env;
-  // TODO: Escape single quotes.
+  // IMPORTANT!!!!!!!!
+  // TODO: Escape single quotes.  Attacker can run any code otherwise.
   snprintf(cmd_ptr, echo_body_len + 1, "echo '%s' | ", body);
   cmd_ptr = &cmd_ptr[echo_body_len];
   for (i = 0; i < env->size; i++) {
