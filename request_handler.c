@@ -75,7 +75,6 @@ void handle_cgi_request(int connfd, Request* request, Route* route, Config* conf
   char* buffer = (char*) x_malloc(RESPONSE_BUFFER_SIZE * sizeof(char));
 
   char* cmd = get_cgi_command(request, route, config);
-  printf("CMD: %s\n", cmd);
   if (cmd == NULL) {
     printf("File not found: %s\n", request->path);
     write_response(connfd, "HTTP/1.0 404 Not Found\r\nContent-Length: 15\r\n\r\nFile Not Found\n");
@@ -218,7 +217,7 @@ char* get_cmd_with_env(char* cmd, Dictionary* env, char* body, int content_lengt
     // Format: 'KEY="VALUE" '
     total_length += strlen(entry->key) + 2 + strlen(entry->value) + 2;
   }
-  int echo_body_len = content_length + 10;  // Add room for 'echo "$BODY" | '
+  int echo_body_len = content_length + 10;  // Add room for "echo '$BODY' | "
   total_length += echo_body_len;
   total_length += strlen(cmd);
   total_length += 1;  // null terminator.
@@ -226,12 +225,12 @@ char* get_cmd_with_env(char* cmd, Dictionary* env, char* body, int content_lengt
   char* cmd_with_env = (char*) x_malloc(total_length * sizeof(char));
   memset(cmd_with_env, 0, total_length);
   char* cmd_ptr = cmd_with_env;
-  // TODO: Escape double quotes, $, etc?
-  snprintf(cmd_ptr, echo_body_len + 1, "echo \"%s\" | ", body);
+  // TODO: Escape single quotes.
+  snprintf(cmd_ptr, echo_body_len + 1, "echo '%s' | ", body);
   cmd_ptr = &cmd_ptr[echo_body_len];
   for (i = 0; i < env->size; i++) {
     DictionaryEntry* entry = &entries[i];
-    sprintf(cmd_ptr, "%s=\"%s\" ", entry->key, (char*) entry->value);
+    sprintf(cmd_ptr, "%s='%s' ", entry->key, (char*) entry->value);
     int len = strlen(entry->key) + 2 + strlen(entry->value) + 2;
     cmd_ptr = &cmd_ptr[len];
   }
