@@ -1,15 +1,16 @@
 #include <stdio.h>
 #include <string.h>
+#include <netinet/in.h>
 #include "config.h"
 #include "lib.h"
 #include "request.h"
 #include "request_handler.h"
 
-static char* get_cgi_command(Request* request, Route* route);
+static char* get_cgi_command(Request* request, Route* route, Config* config);
 static char* get_cmd_with_env(char* cmd, Dictionary* env);
 static char* get_header_key(char* header);
 static char* get_local_path(Request* request, Route* route);
-static void handle_cgi_request(int connfd, Request* request, Route* route);
+static void handle_cgi_request(int connfd, Request* request, Route* route, Config* config);
 static void handle_file_request(int connfd, Request* request, Route* route);
 static void write_content_length_header(int connfd, long size);
 static void write_file(int connfd, char* path);
@@ -24,14 +25,15 @@ static void write_type_headers(int connfd, char* file_name);
 #define RESPONSE_BUFFER_SIZE 1048576
 
 
-void handle_request(int connfd, Config* config) {
+void handle_request(int connfd, struct sockaddr_in* client_addr, Config* config) {
   char* buffer = (char*) x_malloc(REQUEST_BUFFER_SIZE * sizeof(char));
   memset(buffer, 0, REQUEST_BUFFER_SIZE);
-  if (read(connfd, buffer, REQUEST_BUFFER_SIZE) < 0) {
+  int raw_request_length;
+  if ((raw_request_length = read(connfd, buffer, REQUEST_BUFFER_SIZE)) < 0) {
     fail("ERROR: Unable to read socket.");
   }
 
-  Request* request = Request_new(buffer);
+  Request* request = Request_new(buffer, raw_request_length, client_addr);
   if (request == NULL) {
     printf("Bad request received: %s\n", buffer);
     write_response(connfd, "HTTP/1.0 400 Bad Request\r\nContent-Length: 0\r\n\r\n");
@@ -46,7 +48,7 @@ void handle_request(int connfd, Config* config) {
     }
     switch (route->type) {
       case ROUTE_TYPE_CGI:
-        handle_cgi_request(connfd, request, route);
+        handle_cgi_request(connfd, request, route, config);
         break;
       case ROUTE_TYPE_FILE:
         handle_file_request(connfd, request, route);
@@ -69,10 +71,10 @@ int is_route_match(Route* route, Request* request) {
 }
 
 
-void handle_cgi_request(int connfd, Request* request, Route* route) {
+void handle_cgi_request(int connfd, Request* request, Route* route, Config* config) {
   char* buffer = (char*) x_malloc(RESPONSE_BUFFER_SIZE * sizeof(char));
 
-  char* cmd = get_cgi_command(request, route);
+  char* cmd = get_cgi_command(request, route, config);
   if (cmd == NULL) {
     printf("File not found: %s\n", request->path);
     write_response(connfd, "HTTP/1.0 404 Not Found\r\nContent-Length: 15\r\n\r\nFile Not Found\n");
@@ -119,16 +121,16 @@ void handle_cgi_request(int connfd, Request* request, Route* route) {
 }
 
 
-char* get_cgi_command(Request* request, Route* route) {
+char* get_cgi_command(Request* request, Route* route, Config* config) {
   char* local_path = get_local_path(request, route);
   if (!file_exists(local_path)) {
     x_free(local_path);
     return NULL;
   }
-  CgiConfig* config = (CgiConfig*) route->config;
+  CgiConfig* cgi_config = (CgiConfig*) route->config;
   // TODO: Support path after script.
   char* extension = get_extension(local_path);
-  char* cmd = Dictionary_get(config->file_ext_to_cmd, extension);
+  char* cmd = Dictionary_get(cgi_config->file_ext_to_cmd, extension);
   char* cmd_to_execute;
   if (cmd == NULL) {
     cmd_to_execute = local_path;
@@ -139,28 +141,36 @@ char* get_cgi_command(Request* request, Route* route) {
     cmd_to_execute[size] = '\0';
   }
 
+  char* port = (char*) x_malloc(6 * sizeof(char));
+  char* content_length = (char*) x_malloc(10 * sizeof(char));
+  memset(port, 0, 6);
+  memset(content_length, 0, 6);
+  sprintf(port, "%i", config->port);
+  sprintf(content_length, "%i", request->content_length);
+
   // TODO: Populate all of these as possible.
   Dictionary* env = Dictionary_new();
   // Set standard CGI environment variables.
   Dictionary_set(env, "AUTH_TYPE", "");
-  Dictionary_set(env, "CONTENT_LENGTH", "");
-  Dictionary_set(env, "CONTENT_TYPE", "");
-  Dictionary_set(env, "GATEWAY_INTERFACE", "");
+  Dictionary_set(env, "CONTENT_LENGTH", content_length);
+  Dictionary_set(env, "CONTENT_TYPE", Dictionary_get_default(request->headers, "Content-Type", ""));
+  Dictionary_set(env, "GATEWAY_INTERFACE", "CGI/1.1");
   Dictionary_set(env, "PATH_INFO", request->path);
   // TODO: Support for path after script here.
   Dictionary_set(env, "PATH_TRANSLATED", "");
-  Dictionary_set(env, "REDIRECT_STATUS", "200");  // Required for php-cgi
-  Dictionary_set(env, "REMOTE_ADDR", "");
-  Dictionary_set(env, "REMOTE_HOST", "");
+  Dictionary_set(env, "REMOTE_ADDR", request->remote_ip_address);
+  Dictionary_set(env, "REMOTE_HOST", request->remote_ip_address);
   Dictionary_set(env, "REMOTE_IDENT", "");
   Dictionary_set(env, "REMOTE_USER", "");
   Dictionary_set(env, "REQUEST_METHOD", request->method);
-  Dictionary_set(env, "SCRIPT_FILENAME", local_path);  // Required for php-cgi
   Dictionary_set(env, "SCRIPT_NAME", local_path);
   Dictionary_set(env, "SERVER_NAME", "");
-  Dictionary_set(env, "SERVER_PORT", "");
-  Dictionary_set(env, "SERVER_PROTOCOL", "");
+  Dictionary_set(env, "SERVER_PORT", port);
+  Dictionary_set(env, "SERVER_PROTOCOL", "HTTP/1.0");
   Dictionary_set(env, "SERVER_SOFTWARE", "");
+
+  Dictionary_set(env, "REDIRECT_STATUS", "200");  // Required for php-cgi
+  Dictionary_set(env, "SCRIPT_FILENAME", local_path);  // Required for php-cgi
 
   DictionaryEntry* entries = Dictionary_get_entries(request->headers);
   int i;
@@ -173,6 +183,8 @@ char* get_cgi_command(Request* request, Route* route) {
   char* cmd_with_env = get_cmd_with_env(cmd_to_execute, env);
   x_free(local_path);
   x_free(cmd_to_execute);
+  x_free(port);
+  x_free(content_length);
   Dictionary_delete(env);
   return cmd_with_env;
 }

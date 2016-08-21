@@ -38,7 +38,7 @@ void main(void) {
   }
 
   close(listenfd);
-  handle_request(connfd, config);
+  handle_request(connfd, &client_addr, config);
   close(connfd);
   Config_delete(config);
 }

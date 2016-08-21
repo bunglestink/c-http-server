@@ -54,6 +54,14 @@ char* Dictionary_get(Dictionary* dict, const char* key) {
 }
 
 
+char* Dictionary_get_default(Dictionary* dict, const char* key, char* default_value) {
+  if (Dictionary_has(dict, key)) {
+    return Dictionary_get(dict, key);
+  }
+  return default_value;
+}
+
+
 int Dictionary_has(Dictionary* dict, const char* key) {
   DictionaryEntry* entry = get_entry(dict, key);
   return entry == NULL ? 0 : 1;

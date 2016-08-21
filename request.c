@@ -1,5 +1,6 @@
 #include <stdio.h>
 #include <string.h>
+#include <netinet/in.h>
 #include "lib.h"
 #include "request.h"
 
@@ -11,9 +12,13 @@ static Dictionary* get_headers(char* raw_request, size_t first_header_index, siz
 static char* get_body(char* raw_request, size_t first_body_index);
 
 
-Request* Request_new(char* raw_request) {
+Request* Request_new(char* raw_request, int raw_request_length, struct sockaddr_in* client_addr) {
   size_t i;
   Request* request = (Request*) x_malloc(sizeof(Request));
+  request->remote_port = client_addr->sin_port;
+  request->remote_ip_address = (char*) x_malloc(INET_ADDRSTRLEN * sizeof(char));
+  inet_ntop(AF_INET, &client_addr->sin_addr, request->remote_ip_address, INET_ADDRSTRLEN);
+
   request->method = NULL;
   request->path = NULL;
   request->headers = NULL;
@@ -49,6 +54,8 @@ Request* Request_new(char* raw_request) {
     Request_delete(request);
     return NULL;
   }
+  // TODO: Consider validating the content-length here.
+  request->content_length = raw_request_length - i;
   return request;
 }
 
@@ -136,14 +143,20 @@ int add_next_header(Dictionary* dict, char* request, size_t lf) {
   if (colon < 1 || lf < colon) {
     return 0;
   }
-  // TODO: Trim key?
   char* key = (char*) x_malloc((1 + colon) * sizeof(char));
   strncpy(key, request, colon);
   key[colon] = '\0';
-  // TODO: Trim value.
-  size_t size = lf - colon;
+  // TODO: Consider more robust trimming.
+  size_t start = colon + 1;
+  while (is_whitespace(request[start])) {
+    start += 1;
+  }
+  size_t size = lf - start;
+  if (request[lf - 1] == '\r') {
+    size -= 1;
+  }
   char* value = (char*) x_malloc((1 + size) * sizeof(char));
-  strncpy(value, &request[colon + 1], size);
+  strncpy(value, &request[start], size);
   value[size] = '\0';
 
   Dictionary_set(dict, key, value);
@@ -153,7 +166,6 @@ int add_next_header(Dictionary* dict, char* request, size_t lf) {
 
 char* get_body(char* raw_request, size_t first_body_index) {
   int len = strlen(raw_request);
-  // TODO: Consider validating the body here (content-length?).
   return &raw_request[first_body_index];
 }
 
@@ -161,6 +173,7 @@ char* get_body(char* raw_request, size_t first_body_index) {
 void Request_delete(Request* request) {
   Dictionary_delete(request->headers);
   // Note: request->body is a part of raw_request.
+  x_free(request->remote_ip_address);
   x_free(request->method);
   x_free(request->path);
   x_free(request);
