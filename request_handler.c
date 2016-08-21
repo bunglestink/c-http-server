@@ -18,15 +18,14 @@ static int write_response_bytes(int connfd, char* raw_response, size_t num_bytes
 static void write_type_headers(int connfd, char* file_name);
 
 
-// TODO: Probably enlarge this.
-#define REQUEST_BUFFER_SIZE 65536
-
+// Request buffer size of 1MB
+#define REQUEST_BUFFER_SIZE 1048576
 // Response buffer size of 1MB
 #define RESPONSE_BUFFER_SIZE 1048576
 
 
 void handle_request(int connfd, Config* config) {
-  char buffer[REQUEST_BUFFER_SIZE];
+  char* buffer = (char*) x_malloc(REQUEST_BUFFER_SIZE * sizeof(char));
   memset(buffer, 0, REQUEST_BUFFER_SIZE);
   if (read(connfd, buffer, REQUEST_BUFFER_SIZE) < 0) {
     fail("ERROR: Unable to read socket.");
@@ -59,6 +58,7 @@ void handle_request(int connfd, Config* config) {
     break;
   }
   Request_delete(request);
+  x_free(buffer);
 }
 
 
@@ -70,18 +70,20 @@ int is_route_match(Route* route, Request* request) {
 
 
 void handle_cgi_request(int connfd, Request* request, Route* route) {
-  char buffer[RESPONSE_BUFFER_SIZE];
+  char* buffer = (char*) x_malloc(RESPONSE_BUFFER_SIZE * sizeof(char));
 
   char* cmd = get_cgi_command(request, route);
   if (cmd == NULL) {
     printf("File not found: %s\n", request->path);
     write_response(connfd, "HTTP/1.0 404 Not Found\r\nContent-Length: 15\r\n\r\nFile Not Found\n");
+    x_free(buffer);
     return;
   }
   FILE* proc = popen(cmd, "r");
   if (!proc) {
     printf("Error running command: %s\n", cmd);
     write_response(connfd, "HTTP/1.0 500 Internal Server Error\r\nContent-Length: 22\r\n\r\nInternal Server Error\n");
+    x_free(buffer);
     x_free(cmd);
     return;
   }
@@ -112,6 +114,7 @@ void handle_cgi_request(int connfd, Request* request, Route* route) {
   }
 
   x_free(cmd);
+  x_free(buffer);
   pclose(proc);
 }
 
