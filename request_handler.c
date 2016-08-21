@@ -7,7 +7,7 @@
 #include "request_handler.h"
 
 static char* get_cgi_command(Request* request, Route* route, Config* config);
-static char* get_cmd_with_env(char* cmd, Dictionary* env);
+static char* get_cmd_with_env(char* cmd, Dictionary* env, char* body, int content_length);
 static char* get_header_key(char* header);
 static char* get_local_path(Request* request, Route* route);
 static void handle_cgi_request(int connfd, Request* request, Route* route, Config* config);
@@ -75,6 +75,7 @@ void handle_cgi_request(int connfd, Request* request, Route* route, Config* conf
   char* buffer = (char*) x_malloc(RESPONSE_BUFFER_SIZE * sizeof(char));
 
   char* cmd = get_cgi_command(request, route, config);
+  printf("CMD: %s\n", cmd);
   if (cmd == NULL) {
     printf("File not found: %s\n", request->path);
     write_response(connfd, "HTTP/1.0 404 Not Found\r\nContent-Length: 15\r\n\r\nFile Not Found\n");
@@ -180,7 +181,7 @@ char* get_cgi_command(Request* request, Route* route, Config* config) {
   }
   x_free(entries);
 
-  char* cmd_with_env = get_cmd_with_env(cmd_to_execute, env);
+  char* cmd_with_env = get_cmd_with_env(cmd_to_execute, env, request->body, request->content_length);
   x_free(local_path);
   x_free(cmd_to_execute);
   x_free(port);
@@ -208,7 +209,7 @@ char* get_header_key(char* header) {
 }
 
 
-char* get_cmd_with_env(char* cmd, Dictionary* env) {
+char* get_cmd_with_env(char* cmd, Dictionary* env, char* body, int content_length) {
   size_t total_length = 0;
   DictionaryEntry* entries = Dictionary_get_entries(env);
   int i;
@@ -217,12 +218,17 @@ char* get_cmd_with_env(char* cmd, Dictionary* env) {
     // Format: 'KEY="VALUE" '
     total_length += strlen(entry->key) + 2 + strlen(entry->value) + 2;
   }
+  int echo_body_len = content_length + 10;  // Add room for 'echo "$BODY" | '
+  total_length += echo_body_len;
   total_length += strlen(cmd);
   total_length += 1;  // null terminator.
 
   char* cmd_with_env = (char*) x_malloc(total_length * sizeof(char));
   memset(cmd_with_env, 0, total_length);
   char* cmd_ptr = cmd_with_env;
+  // TODO: Escape double quotes, $, etc?
+  snprintf(cmd_ptr, echo_body_len + 1, "echo \"%s\" | ", body);
+  cmd_ptr = &cmd_ptr[echo_body_len];
   for (i = 0; i < env->size; i++) {
     DictionaryEntry* entry = &entries[i];
     sprintf(cmd_ptr, "%s=\"%s\" ", entry->key, (char*) entry->value);
