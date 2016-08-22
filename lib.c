@@ -109,6 +109,29 @@ size_t last_index_of(char* input, char target) {
 
 
 /**
+ * Returns the number of occurrences of target char in input.
+ */
+size_t char_count(char* input, char target) {
+  return nchar_count(input, target, strlen(input));
+}
+
+
+/**
+ * Returns the number of occurrences of target char in input for given length.
+ */
+size_t nchar_count(char* input, char target, size_t len) {
+  size_t count = 0;
+  size_t i;
+  for (i = 0; i < len; i++) {
+    if (input[i] == target) {
+      count += 1;
+    }
+  }
+  return count;
+}
+
+
+/**
  * malloc proxy to handle memory erros by logging and crashing.body
  */
 void* x_malloc(size_t size) {

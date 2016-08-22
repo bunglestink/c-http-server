@@ -6,6 +6,7 @@
 #include "request.h"
 #include "request_handler.h"
 
+static size_t copy_escape_for_shell(char* target, char* source, int len);
 static char* get_cgi_command(Request* request, Route* route, Config* config);
 static char* get_cmd_with_env(char* cmd, Dictionary* env, char* body, int content_length);
 static char* get_header_key(char* header);
@@ -216,27 +217,68 @@ char* get_cmd_with_env(char* cmd, Dictionary* env, char* body, int content_lengt
     DictionaryEntry* entry = &entries[i];
     // Format: 'KEY="VALUE" '
     total_length += strlen(entry->key) + 2 + strlen(entry->value) + 2;
+    // Add four extra characters to escape single quotes.
+    total_length += 4 * char_count(entry->value, '\'');
   }
   int echo_body_len = content_length + 10;  // Add room for "echo '$BODY' | "
   total_length += echo_body_len;
+  total_length += 4 * nchar_count(body, '\'', content_length);
   total_length += strlen(cmd);
   total_length += 1;  // null terminator.
 
   char* cmd_with_env = (char*) x_malloc(total_length * sizeof(char));
   memset(cmd_with_env, 0, total_length);
   char* cmd_ptr = cmd_with_env;
-  // IMPORTANT!!!!!!!!
-  // TODO: Escape single quotes.  Attacker can run any code otherwise.
-  snprintf(cmd_ptr, echo_body_len + 1, "echo '%s' | ", body);
-  cmd_ptr = &cmd_ptr[echo_body_len];
+
+  // Final command looks like:
+  // echo 'request body' | ENV_VAR1=val1 ENV_VAR2=val2 script_name
+  // 1. Write echo request body portion.
+  sprintf(cmd_ptr, "echo '");
+  cmd_ptr = &cmd_ptr[6];
+  size_t body_chars = copy_escape_for_shell(cmd_ptr, body, content_length);
+  cmd_ptr = &cmd_ptr[body_chars];
+  sprintf(cmd_ptr, "' | ");
+  cmd_ptr = &cmd_ptr[4];
+
+
+  // 2. Write environment variables.
   for (i = 0; i < env->size; i++) {
     DictionaryEntry* entry = &entries[i];
-    sprintf(cmd_ptr, "%s='%s' ", entry->key, (char*) entry->value);
-    int len = strlen(entry->key) + 2 + strlen(entry->value) + 2;
-    cmd_ptr = &cmd_ptr[len];
+    // Header key should not contain single quote.
+    if (char_count(entry->key, '\'') > 0) {
+      continue;
+    }
+    sprintf(cmd_ptr, "%s='", entry->key);
+    cmd_ptr = &cmd_ptr[2 + strlen(entry->key)];
+    size_t value_len = copy_escape_for_shell(cmd_ptr, entry->value, strlen(entry->value));
+    cmd_ptr = &cmd_ptr[value_len];
+    sprintf(cmd_ptr, "' ");
+    cmd_ptr = &cmd_ptr[2];
   }
+
+  // 3. Write script command.
   sprintf(cmd_ptr, "%s", cmd);
   return cmd_with_env;
+}
+
+
+// Copies from source to target escaping single quotes.
+// Returns number of characters written.
+size_t copy_escape_for_shell(char* target, char* source, int len) {
+  char* x = target;
+  size_t target_index = 0;
+  int i;
+  for (i = 0; i < len; i++) {
+    if (source[i] != '\'') {
+      target[target_index] = source[i];
+      target_index += 1;
+    } else {
+      char* offset_target = &target[target_index];
+      sprintf(offset_target, "'\"'\"'");
+      target_index += 5;
+    }
+  }
+  return target_index;
 }
 
 
