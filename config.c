@@ -20,10 +20,11 @@ Config* get_config() {
   CgiConfig* cgi_config = (CgiConfig*) cgi_route->config;
   cgi_config->local_path = "cgi-bin/";
   cgi_config->file_ext_to_cmd = Dictionary_new();
-  Dictionary_set(cgi_config->file_ext_to_cmd, "sh", "bash");
+  Dictionary_set(cgi_config->file_ext_to_cmd, "js", "node");
   Dictionary_set(cgi_config->file_ext_to_cmd, "php", "php-cgi");
   Dictionary_set(cgi_config->file_ext_to_cmd, "pl", "perl");
   Dictionary_set(cgi_config->file_ext_to_cmd, "py", "python");
+  Dictionary_set(cgi_config->file_ext_to_cmd, "sh", "bash");
 
   Route* www_route = &config->routes[1];
   www_route->path = "/";
